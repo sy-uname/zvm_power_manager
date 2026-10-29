@@ -31,5 +31,5 @@ class AutomaticTests(unittest.TestCase):
 
     def test_cli_dispatch(self):
         with patch.object(m,'load_config',return_value=self.c), patch.object(m,'automatic',return_value={}) as auto, contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(m.main(['auto','--execute']),0)
+            self.assertEqual(m.main(['--config','/test/config.toml','auto','--execute']),0)
             auto.assert_called_once_with(self.c,True)

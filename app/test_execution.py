@@ -149,11 +149,11 @@ class ExecutionTests(unittest.TestCase):
         for action in ('save', 'restore'):
             with patch.object(m, 'inspect', return_value={}) as preview, patch.object(m, 'execute', return_value={}) as execute:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(m.main([action, '--dry-run', '--force']), 0)
+                    self.assertEqual(m.main(['--config', str(Path(__file__).with_name('config.toml')), action, '--dry-run', '--force']), 0)
                 preview.assert_called_once()
                 execute.assert_not_called()
                 with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(m.main([action, '--execute', '--force']), 0)
+                    self.assertEqual(m.main(['--config', str(Path(__file__).with_name('config.toml')), action, '--execute', '--force']), 0)
                 execute.assert_called_once()
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exc:
                 m.main([action, '--dry-run', '--execute'])

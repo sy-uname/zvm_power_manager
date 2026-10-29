@@ -180,3 +180,24 @@ all proposed additions/removals while preserving unrelated saved entries.
 Mismatching, filtered or unresolvable pending VMs remain recorded and are skipped;
 they do not block other eligible VMs. Without --continue, only the pending VMs
 are blocked. Neither --force nor --continue bypasses per-VM consistency checks.
+
+
+## Explicit configuration selection
+
+The configuration must be specified using `--config` before the command, or via
+`ZVM_POWER_MANAGER_CONFIG`. The CLI option takes precedence. An absent or empty
+environment variable is not a configuration. No config is searched for next to
+the script, in HOME, or in XDG directories, and none is automatically created.
+An explicitly supplied invalid/unreadable file causes an error without fallback.
+Help works without a configuration. Relative paths are relative to the working
+directory; use absolute paths in services. Shell expansion of `$HOME` is supported
+by the shell, not performed inside configuration strings by the application.
+
+```sh
+export ZVM_POWER_MANAGER_CONFIG="$HOME/.config/zvm-power-manager/config.toml"
+./venv/bin/python ./zvm_power_manager.py status
+./venv/bin/python ./zvm_power_manager.py --config /path/config.toml status
+```
+
+Earlier examples without --config assume the environment variable above is set.
+The systemd service already supplies --config explicitly and needs no change.

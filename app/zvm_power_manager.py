@@ -90,6 +90,7 @@ class LC:
     COMMAND = 'command'
     COMMAND_TIMEOUT = 'command_timeout'
     CONFIG_FILENAME = 'config.toml'
+    CONFIG_ENV = 'ZVM_POWER_MANAGER_CONFIG'
     STATE_ENCODING = 'utf-8'
     EXECUTED_ACTIONS = 'executed_actions'
     FORCE = 'force'
@@ -227,10 +228,12 @@ class TEXT:
     HELP_STATUS = 'Show power, VM inventory and queues (JSON)'
     HELP_DESCRIPTION = 'zvm-power-manager ST01.3: inspect, preview, save and restore VMs.'
     HELP_COMMANDS = 'Commands (each has its own arguments and help)'
-    HELP_CONFIG = 'Path to config.toml; specify before the command'
+    HELP_CONFIG = 'Configuration path; overrides ZVM_POWER_MANAGER_CONFIG. Specify before the command; no automatic file search.'
+    ERROR_CONFIG_REQUIRED = 'Configuration is required: use --config /path/config.toml before the command or set ZVM_POWER_MANAGER_CONFIG. Example: zvm_power_manager.py --config /path/config.toml status'
+    ERROR_CONFIG_READ = 'Cannot load configuration {0}: {1}. No fallback configuration was used.'
     HELP_DRY_RUN = 'Required: show the plan without executing any actions'
     HELP_ACTION = 'auto: select based on power; save: preview saving; restore: preview restoration'
-    HELP_MAIN_EXAMPLES = '''Usage examples:\n  %(prog)s status\n  %(prog)s check --dry-run\n   %(prog)s --config /opt/zvm-power-manager/config.toml check --dry-run\n\nCommand arguments and detailed help:\n  %(prog)s status --help\n  %(prog)s check --help\n\nPlace global options before the command and command arguments after it.\nstatus and check are read-only. save and restore require --dry-run or --execute.\nUse save --help or restore --help for execution options.\nUse recover --help for pending-operation reconciliation.'''
+    HELP_MAIN_EXAMPLES = '''Usage examples (set ZVM_POWER_MANAGER_CONFIG for commands without --config):\n  %(prog)s --config /path/config.toml status\n  %(prog)s check --dry-run\n   %(prog)s --config /opt/zvm-power-manager/config.toml check --dry-run\n\nCommand arguments and detailed help:\n  %(prog)s status --help\n  %(prog)s check --help\n\nPlace global options before the command and command arguments after it.\nstatus and check are read-only. save and restore require --dry-run or --execute.\nUse save --help or restore --help for execution options.\nUse recover --help for pending-operation reconciliation.'''
     HELP_CHECK_EXAMPLES = '''Examples:\n  %(prog)s --dry-run\n  %(prog)s --dry-run --action save\n  %(prog)s --dry-run --action restore --force\n\nThe command requires --dry-run. No actions are executed, even with --force.\n--force bypasses only the power condition; all other checks remain active.'''
     HELP_STATUS_DETAILS = 'status has no additional options except -h/--help. No data is modified.'
     CLI_ERROR = '{0}: error: {1}\n'
@@ -778,13 +781,17 @@ def automatic(c, execute_mode=False):
             LC.OUTCOME: LC.NO_ACTION, LC.ERROR: None}
 
 
+def configuration_path(explicit):
+    value = explicit if explicit is not None else os.environ.get(LC.CONFIG_ENV)
+    require(isinstance(value, str) and bool(value.strip()), TEXT.ERROR_CONFIG_REQUIRED)
+    return Path(value)
+
+
 def main(argv=None):
     parser = HelpArgumentParser(
         description=TEXT.HELP_DESCRIPTION, epilog=TEXT.HELP_MAIN_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument(LC.OPTION_CONFIG, type=Path,
-                        default=Path(__file__).resolve().with_name(LC.CONFIG_FILENAME),
-                        help=TEXT.HELP_CONFIG)
+    parser.add_argument(LC.OPTION_CONFIG, help=TEXT.HELP_CONFIG)
     commands = parser.add_subparsers(dest=LC.COMMAND, required=True, title=TEXT.HELP_COMMANDS)
     commands.add_parser(LC.STATUS, help=TEXT.HELP_STATUS,
                         description=TEXT.HELP_STATUS, epilog=TEXT.HELP_STATUS_DETAILS)
@@ -819,7 +826,11 @@ def main(argv=None):
     if args.command == LC.CHECK and getattr(args, LC.FORCE, False) and args.action == LC.ACTION_AUTO:
         check.error(TEXT.ERROR_FORCE_ACTION)
     try:
-        c = load_config(args.config)
+        config_path = configuration_path(args.config)
+        try:
+            c = load_config(config_path)
+        except (OSError, ValueError, ValidationError) as exc:
+            raise ValidationError(TEXT.ERROR_CONFIG_READ.format(config_path, exc)) from exc
         if args.command in (LC.ACTION_SAVE, LC.ACTION_RESTORE):
             operation = execute if getattr(args, LC.EXECUTE, False) else inspect
             if getattr(args, LC.CONTINUE, False):
