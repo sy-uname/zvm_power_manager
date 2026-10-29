@@ -1,6 +1,6 @@
 # zvm-power-manager — ST01.3
 
-Python 3.12, standard library only. Run as the configured VM owner (`kirov`).
+Python 3.12, standard library only. Run as the configured VM owner .
 No systemd services or timers are installed. GNOME/UPower are not modified.
 
 ## Commands
@@ -36,9 +36,9 @@ It still requires readable, valid power data.
 
 Save requires AC offline and charge <=30%; restore requires AC online and >=40%.
 These thresholds are configurable. Power is checked before each VM operation.
-Save order: WebServer, lUbuntu-MariaDB, then remaining running VMs when
+Save order: VM1, ..., VMN, then remaining running VMs when
 `include_other_running_vms = true`. With false, only running names in save_order
-are selected. Restore order: lUbuntu-MariaDB, WebServer, then the remaining
+are selected. Restore order: VMN, ..., VM1, then the remaining
 service-recorded entries. Restore only starts VMs currently in `saved` state,
 using `--type headless`; powered-off VMs are not cold-started.
 

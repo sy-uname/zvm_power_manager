@@ -219,8 +219,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-cat >> .gitignore <<'EOF'
-
 # Project-specific exclusions
 *.sqlite3
 .idea/
@@ -229,3 +227,14 @@ cat >> .gitignore <<'EOF'
 #### CODEX
 references/
 docs/evidence/
+
+config.toml
+state.json
+state.json.*
+zvm-power-manager.lock
+.zvm-*
+*.bak
+*.before-*
+.env.*
+!.env.example
+!.env.sample
