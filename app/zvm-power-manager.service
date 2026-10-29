@@ -1,0 +1,25 @@
+[Unit]
+Description=VirtualBox power-aware save and restore
+After=local-fs.target systemd-tmpfiles-setup.service
+RequiresMountsFor=/opt/zvm-power-manager /home/{user} /var/lib/zvm-power-manager
+
+[Service]
+Type=oneshot
+User={user}
+Group={user}
+WorkingDirectory=/opt/zvm-power-manager
+Environment=HOME=/home/{user}
+Environment=USER={user}
+Environment=LOGNAME={user}
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/zvm-power-manager/venv/bin/python /opt/zvm-power-manager/zvm_power_manager.py --config /opt/zvm-power-manager/config.toml auto --execute
+UMask=0077
+TimeoutStartSec=infinity
+TimeoutStopSec=15s
+# VBoxSVC and headless VMs may outlive this short-lived policy process.
+KillMode=process
+# Keep the host VirtualBox IPC namespace accessible.
+PrivateTmp=no
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zvm-power-manager

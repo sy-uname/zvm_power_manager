@@ -1,0 +1,4 @@
+# Type Path Mode User Group Age Argument
+# Keep the shared lock inode; never remove it while the manager is in use.
+d /var/lib/zvm-power-manager 0750 {user} {user} - -
+f /run/lock/zvm-power-manager.lock 0600 {user} {user} - -

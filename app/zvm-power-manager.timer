@@ -1,0 +1,11 @@
+[Unit]
+Description=Check VirtualBox power policy periodically
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=30s
+AccuracySec=1s
+Unit=zvm-power-manager.service
+
+[Install]
+WantedBy=timers.target

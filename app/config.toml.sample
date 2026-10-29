@@ -1,0 +1,16 @@
+schema_version = 1
+vm_owner = {user name}
+##include_other_running_vms = true
+vboxmanage = "/usr/bin/VBoxManage"
+battery_path = "/sys/class/power_supply/BAT1"
+ac_path = "/sys/class/power_supply/ADP1"
+state_path = "/var/lib/zvm-power-manager/state.json"
+lock_path = "/run/lock/zvm-power-manager.lock"
+save_threshold = 30
+restore_threshold = 40
+save_order = ["VM1", "VM2"]
+# Include running VMs not listed in save_order, after the listed VMs.
+include_other_running_vms = true
+restore_order = ["VM2", "VM1"]
+restore_type = "headless"
+command_timeout = 120
