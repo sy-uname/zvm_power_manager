@@ -1,6 +1,5 @@
 schema_version = 1
-vm_owner = {user name}
-##include_other_running_vms = true
+vm_owner = "your-user"
 vboxmanage = "/usr/bin/VBoxManage"
 battery_path = "/sys/class/power_supply/BAT1"
 ac_path = "/sys/class/power_supply/ADP1"
