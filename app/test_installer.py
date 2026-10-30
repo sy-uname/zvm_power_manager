@@ -39,7 +39,7 @@ class InstallerTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
 
     def args(self,**kw):
-        values=dict(user=self.account.pw_name,config=str(self.config),prefix=str(self.prefix),python=sys.executable,update=False,rebuild_venv=False,enable=False,dry_run=False)
+        values=dict(service_name=m.DEFAULT_SERVICE_NAME,user=self.account.pw_name,config=str(self.config),prefix=str(self.prefix),python=sys.executable,update=False,rebuild_venv=False,enable=False,dry_run=False)
         values.update(kw);return argparse.Namespace(**values)
 
     def fake_run(self,argv,check=True):
@@ -66,6 +66,30 @@ class InstallerTests(unittest.TestCase):
 
     def execute(self,**kw):
         with contextlib.redirect_stdout(io.StringIO()):m.install(self.args(**kw))
+
+    def test_custom_name_install_and_update(self):
+        (self.source/m.TIMER).write_text('[Timer]\nOnBootSec=1min\nUnit=' + m.SERVICE + '\n')
+        self.execute(service_name='zvmpm-alice')
+        self.assertTrue((self.units/'zvmpm-alice.service').exists())
+        self.assertIn('Unit=zvmpm-alice.service', (self.units/'zvmpm-alice.timer').read_text())
+        self.assertTrue((self.tmpfiles/'zvmpm-alice.conf').exists())
+        self.assertFalse((self.units/m.SERVICE).exists())
+        self.commands.clear()
+        self.execute(service_name='zvmpm-alice', update=True, enable=True)
+        self.assertIn(['systemctl', 'enable', 'zvmpm-alice.timer'], self.commands)
+        self.assertIn(['systemctl', 'start', 'zvmpm-alice.timer'], self.commands)
+        self.assertFalse(any(m.TIMER in cmd or m.SERVICE in cmd for cmd in self.commands if cmd[0]=='systemctl'))
+
+    def test_invalid_service_names(self):
+        for name in ('../bad', 'bad.service', 'a b', 'bad@user', ''):
+            with self.subTest(name=name), self.assertRaises(m.InstallError):
+                self.execute(service_name=name)
+        self.assertFalse(self.prefix.exists())
+
+    def test_new_name_cannot_update_another_installation(self):
+        self.execute()
+        with self.assertRaises(m.InstallError):
+            self.execute(service_name='other', update=True)
 
     def test_fresh_install_no_enable_no_state_file(self):
         self.execute()

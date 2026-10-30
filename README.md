@@ -1,7 +1,41 @@
 # zvm-power-manager — ST01.3
 
-Python 3.12, standard library only. Run as the configured VM owner .
-No systemd services or timers are installed. GNOME/UPower are not modified.
+Python 3.12 or newer, standard library only. Run as the configured VM owner.
+The installer can configure systemd services and timers. GNOME/UPower are not modified.
+
+## Installation and updates
+
+Use the [Python installer](app/install.py) for automated installation and updates,
+or follow the manual installation guide:
+
+- [Installer guide](app/INSTALLER.md): prerequisites, installation, updates,
+  Python selection, named services, backups and recovery.
+- [Manual installation and systemd setup](app/INSTALL.md).
+- [Sample configuration](app/config.toml.sample).
+
+From the repository root, preview a new installation without sudo:
+
+```sh
+cd app
+python3 install.py --user "$USER" \
+  --config "$HOME/.config/zvmpm/config.toml" --python 3.12 --dry-run
+```
+
+Apply it with `sudo python3 install.py` using the same arguments without
+`--dry-run`. The installer itself requires Python 3.11 or newer. The selected
+application interpreter must already be installed; `--python` selects the venv
+interpreter. Code and venv default to `/opt/zvm-power-manager`; use `--prefix`
+to change that directory. Review the generated configuration before enabling
+VM automation with `--update --enable`, as described in the installer guide.
+
+For updates, add `--update` and pass the existing configuration path. Existing
+config, state and pending journals are preserved. An active timer is paused
+and restarted during the update; an inactive timer stays inactive unless
+`--enable` is supplied.
+
+`--service-name NAME` selects a service/timer pair; the default is
+`zvm-power-manager`. Separate instances require separate installation directories,
+configs, state and lock paths. See the installer guide for examples.
 
 ## Commands
 

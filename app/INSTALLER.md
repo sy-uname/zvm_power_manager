@@ -5,9 +5,29 @@ Python 3.11 or newer; the application interpreter must be Python 3.12 or newer.
 It uses only the standard library and never downloads Python or runs apt/pip.
 Install the desired Python interpreter and its venv support beforehand.
 
-The installer manages one system-wide `zvm-power-manager.service` and timer,
-executed as the selected VM owner. It does not create multiple per-user service
-instances. Code and venv default to `/opt/zvm-power-manager`.
+By default the installer manages `zvm-power-manager.service` and its timer,
+executed as the selected VM owner. Code and venv default to
+`/opt/zvm-power-manager`. Use `--service-name NAME` to install another named
+service/timer pair; the name has no suffix and contains letters, digits, `_` or
+`-`, starting with a letter or digit. The tmpfiles rule and journal identifier
+also use this name. This does not rename or remove an existing service.
+
+For example, install a separate instance (without starting its timer):
+
+```sh
+sudo python3 install.py --user "$USER" \
+  --service-name "zvmpm-$USER" --prefix "/opt/zvmpm-$USER" \
+  --config "$HOME/.config/zvmpm/config.toml"
+```
+
+Use the same `--service-name`, `--prefix` and `--config` on subsequent updates,
+adding `--update`. Each independently updated instance needs a separate prefix;
+shared code/venv updates are not coordinated by this installer. Each user's
+configuration must specify separate state and lock paths. For a newly generated
+config with a custom name, these default to `/var/lib/NAME/state.json` and
+`/run/lock/NAME.lock`. Existing configs are preserved, so check their paths before
+installing a second instance. Omitting `--service-name` always selects the original
+`zvm-power-manager` name, including its existing ownership/conflict checks.
 
 ## First installation
 

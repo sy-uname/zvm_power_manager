@@ -22,7 +22,8 @@ SOURCE_DIR = Path(__file__).resolve().parent / APP_DIR
 UNIT_DIR = Path('/etc/systemd/system')
 TMPFILES_DIR = Path('/etc/tmpfiles.d')
 RUN_LOCK_DIR = Path('/run/lock')
-SERVICE = 'zvm-power-manager.service'
+DEFAULT_SERVICE_NAME = 'zvm-power-manager'
+SERVICE = DEFAULT_SERVICE_NAME + '.service'
 TIMER = 'zvm-power-manager.timer'
 PROBE = ('import json,sys; print(json.dumps({"version":list(sys.version_info[:3]),'
          '"base":getattr(sys,"_base_executable",sys.executable)}))')
@@ -69,7 +70,7 @@ def quote(value, exec_arg=False):
     return '"' + value + '"'
 
 
-def service_text(prefix, config, account, state_parent):
+def service_text(prefix, config, account, state_parent, service_name=DEFAULT_SERVICE_NAME):
     # Do not use /home/<username>: use the passwd database's actual home directory.
     return f'''[Unit]
 Description=VirtualBox power-aware save and restore
@@ -94,14 +95,19 @@ KillMode=process
 PrivateTmp=no
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=zvm-power-manager
+SyslogIdentifier={service_name}
 '''
 
 
-def read_configuration(path, source, account):
+def read_configuration(path, source, account, service_name=DEFAULT_SERVICE_NAME):
     existing = path.exists()
     text = path.read_text() if existing else (source / 'config.toml.sample').read_text().replace(
         'vm_owner = "your-user"', 'vm_owner = ' + json.dumps(account.pw_name))
+    if not existing and service_name != DEFAULT_SERVICE_NAME:
+        text = text.replace('/var/lib/zvm-power-manager/state.json',
+                            '/var/lib/' + service_name + '/state.json')
+        text = text.replace('/run/lock/zvm-power-manager.lock',
+                            '/run/lock/' + service_name + '.lock')
     data = tomllib.loads(text)
     if data.get('vm_owner') != account.pw_name:
         raise InstallError('Configuration vm_owner must match --user')
@@ -205,6 +211,10 @@ def show_property(unit, name):
 
 def install(args):
     source = SOURCE_DIR
+    service_name = args.service_name
+    if (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,199}', service_name)):
+        raise InstallError('--service-name must be a base name (letters, digits, _ or -), without .service/.timer')
+    service_id, timer_id = service_name + '.service', service_name + '.timer'
     prefix, config = absolute(args.prefix), absolute(args.config)
     account = pwd.getpwnam(args.user)
     if account.pw_uid == 0 or not re.fullmatch(r'[a-zA-Z0-9_.-]+', account.pw_name):
@@ -213,16 +223,24 @@ def install(args):
         raise InstallError('User home directory must be absolute')
     app = prefix / 'zvm_power_manager.py'
     venv = prefix / 'venv'
-    unit = UNIT_DIR / SERVICE
-    timer = unit.with_name(TIMER)
-    tmpfiles = TMPFILES_DIR / 'zvm-power-manager.conf'
+    unit = UNIT_DIR / service_id
+    timer = unit.with_name(timer_id)
+    tmpfiles = TMPFILES_DIR / (service_name + '.conf')
     if not args.update and (app.exists() or venv.exists() or unit.exists() or timer.exists()):
         raise InstallError('An installation already exists; use --update')
+    if args.update and not unit.exists():
+        raise InstallError('--update requires the selected service to exist; use a separate --prefix for a new service')
     if args.update and not app.exists():
         raise InstallError('--update requires an existing installation')
+    for other in UNIT_DIR.glob('*.service'):
+        if other == unit:
+            continue
+        content = other.read_text()
+        if str(prefix / 'zvm_power_manager.py') in content or quote(prefix / 'zvm_power_manager.py', True) in content:
+            raise InstallError(f'Installation directory is used by {other.name}; use a separate --prefix')
     if unit.exists():
         check_existing_unit(unit.read_text(), account, config)
-    exists, config_text, cfg = read_configuration(config, source, account)
+    exists, config_text, cfg = read_configuration(config, source, account, service_name)
     if args.update and not exists:
         raise InstallError('Update requires the existing configuration; it will not create a replacement')
     if args.enable and not exists:
@@ -240,8 +258,8 @@ def install(args):
     # Rebuilding must use a base interpreter, not a venv which is about to move.
     if args.rebuild_venv:
         python, info = interpreter(info['base'])
-    unit_text = service_text(prefix, config, account, Path(cfg['state_path']).parent)
-    timer_text = (source / TIMER).read_text()
+    unit_text = service_text(prefix, config, account, Path(cfg['state_path']).parent, service_name)
+    timer_text = (source / TIMER).read_text().replace('Unit=' + SERVICE, 'Unit=' + service_id)
     group = grp.getgrgid(account.pw_gid).gr_name
     tmp_text = '# Keep this lock inode; do not delete during use.\nf ' + quote(cfg['lock_path']) + f' 0600 {account.pw_name} {group} - -\n'
     # Validate source/config in a separate interpreter without calling VBoxManage.
@@ -251,7 +269,7 @@ def install(args):
         validate = ('import importlib.util,sys; s=importlib.util.spec_from_file_location("zvm",sys.argv[1]); '
                     'm=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.load_config(sys.argv[2])')
         run([python, '-B', '-I', '-c', validate, source / 'zvm_power_manager.py', check_config])
-    print(json.dumps({'mode': 'update' if args.update else 'install', 'user': account.pw_name,
+    print(json.dumps({'service_name': service_name, 'mode': 'update' if args.update else 'install', 'user': account.pw_name,
                       'config': str(config), 'config_preserved': exists, 'prefix': str(prefix),
                       'python': str(python), 'python_version': info['version'],
                       'rebuild_venv': args.rebuild_venv, 'enable_requested': args.enable,
@@ -263,10 +281,10 @@ def install(args):
     for target in (prefix, config, Path(cfg['state_path']), Path(cfg['lock_path']), unit, timer, tmpfiles):
         if target.is_symlink():
             raise InstallError(f'Symlink target is not supported: {target}')
-    if show_property(SERVICE, 'ActiveState') not in ('inactive', 'failed', ''):
+    if show_property(service_id, 'ActiveState') not in ('inactive', 'failed', ''):
         raise InstallError('Service is active; wait for it to finish before updating (it will not be killed)')
-    was_active = show_property(TIMER, 'ActiveState') == 'active'
-    was_enabled = run(['systemctl', 'is-enabled', TIMER], check=False).stdout.strip() == 'enabled'
+    was_active = show_property(timer_id, 'ActiveState') == 'active'
+    was_enabled = run(['systemctl', 'is-enabled', timer_id], check=False).stdout.strip() == 'enabled'
     # Acquire the application's own lock before stopping scheduling or replacing files.
     lock_path = Path(cfg['lock_path'])
     fd = open_lock(lock_path)
@@ -285,8 +303,8 @@ def install(args):
     timer_error = None
     try:
         if was_active:
-            run(['systemctl', 'stop', TIMER])
-        if show_property(SERVICE, 'ActiveState') not in ('inactive', 'failed', ''):
+            run(['systemctl', 'stop', timer_id])
+        if show_property(service_id, 'ActiveState') not in ('inactive', 'failed', ''):
             raise InstallError('A scheduled invocation is still active; retry after it finishes')
         prefix.mkdir(parents=True, exist_ok=True)
         backup = Path(tempfile.mkdtemp(prefix='install-backup-', dir=prefix))
@@ -318,7 +336,7 @@ def install(args):
         run(['systemd-analyze', 'verify', unit, timer])
         run(['systemctl', 'daemon-reload'])
         if args.enable:
-            run(['systemctl', 'enable', TIMER])
+            run(['systemctl', 'enable', timer_id])
         (backup / 'manifest.json').write_text(json.dumps([{'target': str(path), 'backup': str(previous) if previous else None} for path, previous in changes.entries], indent=2))
         success = True
     except BaseException:
@@ -330,13 +348,13 @@ def install(args):
             old_venv.rename(venv)
         run(['systemctl', 'daemon-reload'], check=False)
         if args.enable and not was_enabled:
-            run(['systemctl', 'disable', TIMER], check=False)
+            run(['systemctl', 'disable', timer_id], check=False)
         raise
     finally:
         os.close(fd)
         # Start only after releasing the application lock; this can run real policy.
         if was_active or (success and args.enable):
-            result = run(['systemctl', 'start', TIMER], check=False)
+            result = run(['systemctl', 'start', timer_id], check=False)
             if result.returncode:
                 timer_error = 'Could not restart the timer: ' + result.stderr.strip()
                 print('WARNING: ' + timer_error, file=sys.stderr)
@@ -352,6 +370,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--user', required=True, help='VM owner account (not root)')
     parser.add_argument('--config', required=True, help='Explicit absolute configuration path; existing files are preserved')
+    parser.add_argument('--service-name', default=DEFAULT_SERVICE_NAME, help='Service/timer base name without suffix (default: %(default)s)')
     parser.add_argument('--prefix', default='/opt/zvm-power-manager', help='Application and venv installation directory (default: %(default)s)')
     parser.add_argument('--python', help='Python version or executable/path, e.g. 3.13 or /usr/bin/python3.13; default: existing venv or python3.12')
     parser.add_argument('--update', action='store_true', help='Update an existing installation, preserving configs, data and timer state')
