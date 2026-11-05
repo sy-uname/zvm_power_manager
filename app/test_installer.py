@@ -39,7 +39,7 @@ class InstallerTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
 
     def args(self,**kw):
-        values=dict(service_name=m.DEFAULT_SERVICE_NAME,user=self.account.pw_name,config=str(self.config),prefix=str(self.prefix),python=sys.executable,update=False,rebuild_venv=False,enable=False,dry_run=False)
+        values=dict(with_tools=False,service_name=m.DEFAULT_SERVICE_NAME,user=self.account.pw_name,config=str(self.config),prefix=str(self.prefix),python=sys.executable,update=False,rebuild_venv=False,enable=False,dry_run=False)
         values.update(kw);return argparse.Namespace(**values)
 
     def fake_run(self,argv,check=True):
@@ -90,6 +90,41 @@ class InstallerTests(unittest.TestCase):
         self.execute()
         with self.assertRaises(m.InstallError):
             self.execute(service_name='other', update=True)
+
+    def prepare_tools(self):
+        for name in ('zvmpm', 'zvmpm_save'):
+            (self.source/name).write_text((Path(__file__).parent/name).read_text())
+
+    def test_tools_install_update_and_preserve_without_flag(self):
+        self.prepare_tools()
+        self.execute(with_tools=True, service_name='custom')
+        wrapper = self.prefix/'zvmpm'
+        helper = self.prefix/'zvmpm_save'
+        self.assertIn(str(self.config), wrapper.read_text())
+        self.assertIn('ZVM_POWER_MANAGER_TIMER=custom.timer', helper.read_text())
+        self.assertEqual(wrapper.stat().st_mode & 0o777, 0o755)
+        wrapper.write_text('local changes')
+        self.execute(update=True, service_name='custom')
+        self.assertEqual(wrapper.read_text(), 'local changes')
+        self.execute(update=True, with_tools=True, service_name='custom')
+        self.assertIn(str(self.config), wrapper.read_text())
+
+    def test_tools_rollback(self):
+        self.prepare_tools()
+        self.execute(with_tools=True)
+        wrapper = self.prefix/'zvmpm'
+        wrapper.write_text('previous wrapper')
+        self.fail_verify=True
+        with self.assertRaises(m.InstallError):
+            self.execute(update=True, with_tools=True)
+        self.assertEqual(wrapper.read_text(), 'previous wrapper')
+
+    def test_tools_dry_run_and_missing_source(self):
+        with self.assertRaises(FileNotFoundError):
+            self.execute(with_tools=True, dry_run=True)
+        self.prepare_tools()
+        self.execute(with_tools=True, dry_run=True)
+        self.assertFalse(self.prefix.exists())
 
     def test_fresh_install_no_enable_no_state_file(self):
         self.execute()
@@ -169,7 +204,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(m.quote('a%"$b',True),'"a%%\\"$$b"')
         with self.assertRaises(m.InstallError):m.quote('a\nb')
 
-if __name__=='__main__':unittest.main()
+
 
 
 class LockOpeningTests(unittest.TestCase):
@@ -212,3 +247,42 @@ class UnitVerificationTests(unittest.TestCase):
                 timer.write_text('[Unit]\nDescription=Test timer\n[Timer]\nOnBootSec=1min\n')
                 result = subprocess.run(['systemd-analyze', 'verify', str(service), str(timer)], text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class ToolExecutionTests(unittest.TestCase):
+    def test_wrapper_quoting_and_exit_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            config=root / "config ' $HOME $(false).toml"
+            scripts=m.tool_scripts(Path(__file__).parent, config, 'custom.timer')
+            (root/'zvmpm').write_text(scripts['zvmpm'])
+            (root/'venv/bin').mkdir(parents=True)
+            python=root/'venv/bin/python'
+            python.write_text('#!/bin/bash\nprintf "%s\\n" "$ZVM_POWER_MANAGER_CONFIG" "$@"\nexit 7\n')
+            python.chmod(0o755)
+            result=subprocess.run(['bash', str(root/'zvmpm'), 'argument with spaces'], text=True, capture_output=True)
+            self.assertEqual(result.returncode,7)
+            self.assertEqual(result.stdout.splitlines(), [str(config),str(root/'zvm_power_manager.py'),'argument with spaces'])
+
+    def test_save_stops_selected_timer_before_save_and_aborts_on_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            scripts=m.tool_scripts(Path(__file__).parent, root/'config', 'custom.timer')
+            (root/'zvmpm_save').write_text(scripts['zvmpm_save'])
+            sudo=root/'sudo'
+            sudo.write_text('#!/bin/bash\nprintf "%s\\n" "$*"\nexit "${STOP_RC:-0}"\n')
+            sudo.chmod(0o755)
+            wrapper=root/'zvmpm'
+            wrapper.write_text('#!/bin/bash\nprintf "%s\\n" "$*"\nexit 8\n')
+            wrapper.chmod(0o755)
+            env=dict(os.environ, PATH=str(root)+':'+os.environ['PATH'])
+            result=subprocess.run(['bash',str(root/'zvmpm_save')],env=env,text=True,capture_output=True)
+            self.assertEqual(result.returncode,8)
+            self.assertEqual(result.stdout.splitlines(),['systemctl stop custom.timer','save --force --execute'])
+            env['STOP_RC']='1'
+            result=subprocess.run(['bash',str(root/'zvmpm_save')],env=env,text=True,capture_output=True)
+            self.assertEqual(result.returncode,1)
+            self.assertEqual(result.stdout.splitlines(),['systemctl stop custom.timer'])
+
+if __name__ == '__main__':
+    unittest.main()

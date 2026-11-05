@@ -18,13 +18,16 @@ import tomllib
 MIN_PYTHON = (3, 12)
 # 'app'
 APP_DIR = '' 
+APP_NAME = 'zvm_power_manager.py'
+PYTHON_EXE = 'bin/python'
+CONFIG_NAME = 'config.toml'
 SOURCE_DIR = Path(__file__).resolve().parent / APP_DIR
 UNIT_DIR = Path('/etc/systemd/system')
 TMPFILES_DIR = Path('/etc/tmpfiles.d')
 RUN_LOCK_DIR = Path('/run/lock')
 DEFAULT_SERVICE_NAME = 'zvm-power-manager'
 SERVICE = DEFAULT_SERVICE_NAME + '.service'
-TIMER = 'zvm-power-manager.timer'
+TIMER = DEFAULT_SERVICE_NAME + '.timer'
 PROBE = ('import json,sys; print(json.dumps({"version":list(sys.version_info[:3]),'
          '"base":getattr(sys,"_base_executable",sys.executable)}))')
 
@@ -49,14 +52,14 @@ def absolute(value):
 
 def interpreter(value):
     value = str(value)
-    if re.fullmatch(r'3\.\d+(?:\.\d+)?', value):
+    if re.fullmatch(rf'{MIN_PYTHON[0]}(?:\.\d+)?', value):
         value = 'python' + value
     executable = shutil.which(value)
     if not executable:
         raise InstallError(f'Python executable not found: {value}')
     info = json.loads(run([executable, '-I', '-c', PROBE]).stdout)
     if tuple(info['version'][:2]) < MIN_PYTHON:
-        raise InstallError(f'Python >= 3.12 is required, found {info["version"]}')
+        raise InstallError(f'Python >= {MIN_PYTHON[0]}.{MIN_PYTHON[1]} is required, found {info["version"]}')
     return Path(executable), info
 
 
@@ -86,7 +89,7 @@ Environment={quote('HOME=' + account.pw_dir)}
 Environment={quote('USER=' + account.pw_name)}
 Environment={quote('LOGNAME=' + account.pw_name)}
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart={quote(prefix / 'venv/bin/python', True)} {quote(prefix / 'zvm_power_manager.py', True)} --config {quote(config, True)} auto --execute
+ExecStart={quote(prefix / 'venv/bin/python', True)} {quote(prefix / APP_NAME, True)} --config {quote(config, True)} auto --execute
 UMask=0077
 TimeoutStartSec=infinity
 TimeoutStopSec=15s
@@ -99,9 +102,26 @@ SyslogIdentifier={service_name}
 '''
 
 
+def tool_scripts(source, config, timer_id):
+    result = {}
+    replacements = (
+        ('zvmpm', r'^export ZVM_POWER_MANAGER_CONFIG=.*$',
+         'export ZVM_POWER_MANAGER_CONFIG=' + shlex.quote(str(config))),
+        ('zvmpm_save', r'^readonly ZVM_POWER_MANAGER_TIMER=.*$',
+         'readonly ZVM_POWER_MANAGER_TIMER=' + shlex.quote(timer_id)),
+    )
+    for name, pattern, replacement in replacements:
+        content, count = re.subn(pattern, lambda match: replacement,
+                                 (source / name).read_text(), flags=re.MULTILINE)
+        if count != 1:
+            raise InstallError(f'Expected exactly one configurable assignment in {name}')
+        result[name] = content
+    return result
+
+
 def read_configuration(path, source, account, service_name=DEFAULT_SERVICE_NAME):
     existing = path.exists()
-    text = path.read_text() if existing else (source / 'config.toml.sample').read_text().replace(
+    text = path.read_text() if existing else (source / f'{CONFIG_NAME}.sample').read_text().replace(
         'vm_owner = "your-user"', 'vm_owner = ' + json.dumps(account.pw_name))
     if not existing and service_name != DEFAULT_SERVICE_NAME:
         text = text.replace('/var/lib/zvm-power-manager/state.json',
@@ -221,7 +241,7 @@ def install(args):
         raise InstallError('--user must name a non-root local account with a simple username')
     if not Path(account.pw_dir).is_absolute():
         raise InstallError('User home directory must be absolute')
-    app = prefix / 'zvm_power_manager.py'
+    app = prefix / APP_NAME
     venv = prefix / 'venv'
     unit = UNIT_DIR / service_id
     timer = unit.with_name(timer_id)
@@ -236,7 +256,7 @@ def install(args):
         if other == unit:
             continue
         content = other.read_text()
-        if str(prefix / 'zvm_power_manager.py') in content or quote(prefix / 'zvm_power_manager.py', True) in content:
+        if str(prefix / APP_NAME) in content or quote(prefix / APP_NAME, True) in content:
             raise InstallError(f'Installation directory is used by {other.name}; use a separate --prefix')
     if unit.exists():
         check_existing_unit(unit.read_text(), account, config)
@@ -245,10 +265,10 @@ def install(args):
         raise InstallError('Update requires the existing configuration; it will not create a replacement')
     if args.enable and not exists:
         raise InstallError('First create/review the generated configuration, then rerun --update --enable')
-    selected = args.python or (str(venv / 'bin/python') if venv.exists() else 'python3.12')
+    selected = args.python or (str(venv / PYTHON_EXE) if venv.exists() else 'python3.12')
     python, info = interpreter(selected)
     if venv.exists():
-        _, current = interpreter(venv / 'bin/python')
+        _, current = interpreter(venv / PYTHON_EXE)
         different = (info['version'][:2] != current['version'][:2] or
                      Path(info['base']).resolve() != Path(current['base']).resolve())
         if different and not args.rebuild_venv:
@@ -262,18 +282,23 @@ def install(args):
     timer_text = (source / TIMER).read_text().replace('Unit=' + SERVICE, 'Unit=' + service_id)
     group = grp.getgrgid(account.pw_gid).gr_name
     tmp_text = '# Keep this lock inode; do not delete during use.\nf ' + quote(cfg['lock_path']) + f' 0600 {account.pw_name} {group} - -\n'
+    scripts = tool_scripts(source, config, timer_id) if args.with_tools else {}
     # Validate source/config in a separate interpreter without calling VBoxManage.
     with tempfile.TemporaryDirectory(prefix='zvm-validate-') as directory:
-        check_config = Path(directory) / 'config.toml'
+        for name, content in scripts.items():
+            script = Path(directory) / name
+            script.write_text(content)
+            run(['bash', '-n', script])
+        check_config = Path(directory) / CONFIG_NAME
         check_config.write_text(config_text)
         validate = ('import importlib.util,sys; s=importlib.util.spec_from_file_location("zvm",sys.argv[1]); '
                     'm=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.load_config(sys.argv[2])')
-        run([python, '-B', '-I', '-c', validate, source / 'zvm_power_manager.py', check_config])
+        run([python, '-B', '-I', '-c', validate, source / APP_NAME, check_config])
     print(json.dumps({'service_name': service_name, 'mode': 'update' if args.update else 'install', 'user': account.pw_name,
                       'config': str(config), 'config_preserved': exists, 'prefix': str(prefix),
                       'python': str(python), 'python_version': info['version'],
                       'rebuild_venv': args.rebuild_venv, 'enable_requested': args.enable,
-                      'dry_run': args.dry_run}, indent=2))
+                      'with_tools': args.with_tools, 'dry_run': args.dry_run}, indent=2))
     if args.dry_run:
         return
     if os.geteuid() != 0:
@@ -316,9 +341,9 @@ def install(args):
         if not venv.exists():
             new_venv = True
             run([python, '-m', 'venv', '--without-pip', venv])
-        run([venv / 'bin/python', '-B', '-I', '-c', 'import tomllib,fcntl'])
+        run([venv / PYTHON_EXE, '-B', '-I', '-c', 'import tomllib,fcntl'])
         # Test the new application before switching the installed file.
-        run([venv / 'bin/python', '-B', source / 'zvm_power_manager.py', '--help'])
+        run([venv / PYTHON_EXE, '-B', source / APP_NAME, '--help'])
         if not exists:
             if not config.parent.exists():
                 user_directory(config.parent, account, 0o700)
@@ -328,8 +353,10 @@ def install(args):
             user_directory(state_parent, account, 0o750)
         run(['runuser', '-u', account.pw_name, '--', 'test', '-r', config])
         run(['runuser', '-u', account.pw_name, '--', 'test', '-w', state_parent])
-        run(['runuser', '-u', account.pw_name, '--', str(venv / 'bin/python'), '-B', '-I', '-c', 'import tomllib,fcntl'])
-        changes.write(app, (source / 'zvm_power_manager.py').read_text())
+        run(['runuser', '-u', account.pw_name, '--', str(venv / PYTHON_EXE), '-B', '-I', '-c', 'import tomllib,fcntl'])
+        changes.write(app, (source / APP_NAME).read_text())
+        for name, content in scripts.items():
+            changes.write(prefix / name, content, mode=0o755)
         changes.write(unit, unit_text)
         changes.write(timer, timer_text)
         changes.write(tmpfiles, tmp_text)
@@ -372,8 +399,9 @@ def main(argv=None):
     parser.add_argument('--config', required=True, help='Explicit absolute configuration path; existing files are preserved')
     parser.add_argument('--service-name', default=DEFAULT_SERVICE_NAME, help='Service/timer base name without suffix (default: %(default)s)')
     parser.add_argument('--prefix', default='/opt/zvm-power-manager', help='Application and venv installation directory (default: %(default)s)')
-    parser.add_argument('--python', help='Python version or executable/path, e.g. 3.13 or /usr/bin/python3.13; default: existing venv or python3.12')
+    parser.add_argument('--python', help=f'Python version or executable/path, e.g. {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or /usr/bin/python{MIN_PYTHON[0]}.{MIN_PYTHON[1]}; default: existing venv or python{MIN_PYTHON[0]}.{MIN_PYTHON[1]}')
     parser.add_argument('--update', action='store_true', help='Update an existing installation, preserving configs, data and timer state')
+    parser.add_argument('--with-tools', action='store_true', help='Install/update zvmpm and zvmpm_save in --prefix with the selected config and timer')
     parser.add_argument('--rebuild-venv', action='store_true', help='With --update, explicitly rebuild venv with selected Python; retain backup')
     parser.add_argument('--enable', action='store_true', help='Explicitly enable/start the timer; may trigger real VM operations')
     parser.add_argument('--dry-run', action='store_true', help='Validate and show plan without changing installation/systemd')

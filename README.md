@@ -37,6 +37,16 @@ and restarted during the update; an inactive timer stays inactive unless
 `zvm-power-manager`. Separate instances require separate installation directories,
 configs, state and lock paths. See the installer guide for examples.
 
+### Optional shell tools
+
+Add `--with-tools` to the installer command to install/update `zvmpm` and
+`zvmpm_save` alongside the application. `zvmpm` uses the selected config and
+forwards CLI arguments. `zvmpm_save` stops the selected timer and immediately
+saves eligible VM states with `save --force --execute`; run it as the VM owner.
+It leaves the timer stopped. Without `--with-tools`, existing tools are unchanged.
+See [tool installation and usage](app/INSTALLER.md#optional-command-line-tools)
+for examples and instructions for resuming the timer.
+
 ## Commands
 
 From `/opt/zvm-power-manager`:

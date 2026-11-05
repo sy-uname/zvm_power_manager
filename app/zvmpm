@@ -1,0 +1,7 @@
+#!/bin/bash
+SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd) || exit 1
+readonly SCRIPT_DIR
+
+export ZVM_POWER_MANAGER_CONFIG="$HOME/.config/zvmpm/config.toml"
+
+exec "$SCRIPT_DIR/venv/bin/python" "$SCRIPT_DIR/zvm_power_manager.py" "$@"

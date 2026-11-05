@@ -125,3 +125,47 @@ Installer tests use temporary directories and simulated system commands:
 ```sh
 python3.12 -B -m unittest -v test_installer
 ```
+
+## Optional command-line tools
+
+Add `--with-tools` on installation or update to copy `zvmpm` and `zvmpm_save`
+into `--prefix` with executable permissions. The installer embeds the absolute
+`--config` path in `zvmpm` and the selected `--service-name` timer in `zvmpm_save`.
+The files are backed up and included in installation rollback. Without this
+option, existing tool files are left unchanged; include it on updates when you
+want the tools refreshed. No PATH entries or shell startup files are modified.
+
+From the repository's `app/` directory, update an existing default service:
+
+```sh
+sudo python3 install.py --user "$USER" \
+  --config "$HOME/.config/zvmpm/config.toml" --update --with-tools
+```
+
+For a custom service, also supply its existing `--service-name` and `--prefix`.
+Use `--dry-run` to validate the plan, including tool templates and Bash syntax,
+without installing files or executing tools.
+
+Run the installed tools as the configured VM owner, not via sudo:
+
+```sh
+/opt/zvm-power-manager/zvmpm status
+/opt/zvm-power-manager/zvmpm save --force --dry-run
+/opt/zvm-power-manager/zvmpm_save
+```
+
+`zvmpm` exports the installed configuration path and forwards arguments and exit
+status to the application. An explicit `--config` still takes precedence.
+
+**`zvmpm_save` performs real VM operations.** It uses sudo only to stop the
+selected timer, then runs `zvmpm save --force --execute` as the invoking user.
+It saves VM state according to the config; it does not power off VMs abruptly.
+`--force` bypasses the power gate only. If stopping the timer fails, saving is
+not attempted. An already active service is not stopped; the application's lock
+may prevent the save until that invocation finishes. The helper has no dry-run
+mode and does not forward arguments; use the explicit preview command above.
+
+The timer stays stopped even if saving fails. It is not disabled: if enabled,
+it starts again on reboot. To resume earlier, run
+`sudo systemctl start NAME.timer` with the installed service name. Starting it
+can resume automatic restore/save according to the power policy.
