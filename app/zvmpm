@@ -2,8 +2,8 @@
 # path wrapper util for zvm-power-manager
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd) || exit 1
 readonly SCRIPT_DIR
-readonly APP_NAME = 'zvm_power_manager.py'
-readonly CONFIG_NAME = 'config.toml'
+readonly APP_NAME='zvm_power_manager.py'
+readonly CONFIG_NAME='config.toml'
 
 export ZVM_POWER_MANAGER_CONFIG="$HOME/.config/zvmpm/$CONFIG_NAME"
 
